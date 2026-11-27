@@ -588,3 +588,52 @@ jobs:
       - name: Release
         if: matrix.target == 'ucrt64'
         run: sh .github/ci/cmake-test.sh release Release -DMI_OPT_ARCH=ON
+
+  # macOS stays here: package_test.yml runs macOS only on swiftlang's self-hosted runners.
+  swift-macos:
+    name: swift, macos-latest
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test
+        run: sh contrib/swift/ci-test.sh
+
+  # The static SDK has no Testing module, so test-override stands in for the tests there.
+  swift:
+    name: swift
+    uses: swiftlang/github-workflows/.github/workflows/package_test.yml@e8b910942e79fb2c0654a87804d8f16e2304285c # 0.0.19
+    with:
+      # 6.2 is the manifest's swift-tools-version.
+      linux_swift_versions: '["6.2", "current"]'
+      linux_host_archs: '["x86_64", "aarch64"]'
+      linux_command: sh contrib/swift/ci-test.sh
+      windows_swift_versions: '["current"]'
+      windows_command: swift build
+      linux_static_sdk_versions: '["current"]'
+      # The reusable workflow runs this inside `if eval`, where set -e is off, so each command exits on failure.
+      linux_static_sdk_command: |
+        host=$(uname -m)
+        other=$([ "$host" = x86_64 ] && echo aarch64 || echo x86_64)
+        for flags in "" "-c release" "--traits Override,LocalDynamicTLS" "--disable-default-traits"; do
+          echo "::group::test-override $host $flags"
+          swift build --package-path contrib/swift/test-override --swift-sdk $host-swift-linux-musl $flags --product test-override || exit 1
+          bin_path=$(swift build --package-path contrib/swift/test-override --swift-sdk $host-swift-linux-musl $flags --show-bin-path) || exit 1
+          output=$("$bin_path/test-override") || exit 1
+          echo "$output"
+          [ "$output" = "ok, override: true" ] || exit 1  # musl always overrides
+          echo "::endgroup::"
+        done
+        echo "::group::build $other"
+        swift build --package-path contrib/swift/test-override --swift-sdk $other-swift-linux-musl --product test-override || exit 1
+        echo "::endgroup::"
+      enable_macos: false
+      enable_macos_swiftly: false
+      enable_wasm_sdk_build: false
+      enable_embedded_wasm_sdk_build: false
+      enable_android_sdk_build: false
+      enable_cxx_interop: false
+      enable_freebsd: false
